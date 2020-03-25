@@ -2,7 +2,7 @@
 #
 # Completion.py script for NZBGet
 #
-# Copyright (C) 2014-2017 kloaknet.
+# Copyright (C) 2014-2016 kloaknet.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -24,10 +24,8 @@
 ### QUEUE EVENTS: NZB_ADDED, NZB_DOWNLOADED, NZB_DELETED, NZB_MARKED       ###
 
 # Verifies that enough articles are available before starting the download.
-# For NZBGet versions 18+, this script needs to be:
-# - listed in EXTENSION SCRIPTS under Extensions.
-# - listed in CATEGORIES for each CategoryX.Extension if not left empty.
-# - optionally the user can add it as scheduler script to manually specify
+# For NZBGet versions 18+, this script needs to be added as Extension script
+# only, optionally the user can add it as scheduler script to manually specify
 # different scheduler intervals instead of checking each 15 minutes by default.
 #
 # For NZBGet versions prior to 18, this script should be added as:
@@ -36,16 +34,15 @@
 #   resume when OK.
 # - Scheduler script: to regularly check completeness of by the script paused 
 #   NZBs in the queue.
-# - listed in CATEGORIES for each CategoryX.Extension if not left empty.
 #
 # NOTE: To stop the script or remove the .lock file, reload NZBGet via SYSTEM.
 #
 # Info about the NZBGet Completion.py script:
 # Author: kloaknet.
 # Support and updates: http://NZBGet.net/forum/viewtopic.php?f=8&t=1736.
-# Date:Sep 1st, 2017.
+# Date: Jan 7st, 2017.
 # License: GPLv3 (http://www.gnu.org/licenses/gpl.html).
-# PP-script Version: 1.1.0.
+# PP-script Version: 1.0.0.
 #
 # NOTE: This script requires NZBGet 15.0+ and Python 2.7.9+ to be installed on 
 # your system.
@@ -53,32 +50,26 @@
 ##############################################################################
 ### OPTIONS                                                                ###
 
-# Queue check.
-# To check the by the script paused items in the queue manually, click the
-# 'Check' button. A scheduler call will then be executed.
-#CheckQueue@Check
-
 # NZB max age.
 # Max age of the NZB file in hours till the scheduler script stops checking 
-# the NZB file, moves it to the history, and marks it BAD or FAILED. Basically 
-# this defines the maximum propagation delay.
-# This option is also used for the FillServer option.
+# the NZB, moves it to the history and marks it BAD.
+# Age limit is also used for the Prioritize and FillServer option.
 # Default = 4.
 #AgeLimit=4
 
-# NZB max sort age.
-# Max age of the NZB file in hours till the scheduler script stops prioritizing
-# age over queue order. Basically this defines the upperbound of the take down
-# window.
-# Default = 48.
-#AgeSortLimit=48
+# Prioritize NZBs older than AgeLimit(Yes, No).
+# NZBs with the highest priority will be checked first. For NZBs with equal 
+# priority, the oldest NZBs will be checked first. With this option set to 'No'
+# , NZB files older than AgeLimit will be the last checked when having equal 
+# priority.
+# Default = No.
+#Prioritize=No
 
 # Check duplicate NZBs stored in the history(Yes, SameScore, No).
 # NZBs with the DUPE status in the history will be checked, note that the
 # NZBGet option DupeCheck needs to be enabled for this to work. 
-# The option SameScore will only check the dupes that have the same or higher 
-# DUPE score as the item  in the queue. This means that only when the file in 
-# the queue. This means that only when the file in the queue is
+# The option SameScore will only check the dupes that have the same DUPE score 
+# as the item  in the queue. This means that only when the file in the queue is
 # older than AgeLimit and marked BAD or FAILED, a lower score DUPE could be 
 # moved back to the queue.
 # Default = SameScore.
@@ -120,7 +111,7 @@
 # Categories to check for completion.
 # Comma separated list like 'TV-HD, TV, Movies, etc'. Leave blank for all 
 # categories. Note that the category of an NZB file is shown in the donwload 
-# and history queue.
+# and histort queue.
 # Default = blank.
 #Categories=
 
@@ -182,22 +173,13 @@ from operator import itemgetter
 # Check if the script is called from NZBGet 15.0 or later.
 # Extraction of server data uses .Retention, introduced in NZBGet 15
 if not 'NZBOP_Server1.Retention' in os.environ:  # new variable since NZBGet 15.0
-    print('NZBget version: ' + os.environ['NZBOP_VERSION'])
     print('[ERROR] This script is only supported by NZBGet 15.0+, stopping')
-    sys.exit(0)
-py_ver = sys.version_info
-if py_ver < (2,7,9) or py_ver > (3,):
-    print('Python version: ' + sys.version)
-    print('[ERROR] This script requires python 2.7.9+, and does not work for ' +
-        'python 3, stopping')
     sys.exit(0)
 
 # Defining constants
 AGE_LIMIT = int(os.environ.get('NZBPO_AgeLimit', 4))
 AGE_LIMIT_SEC = 3600 * AGE_LIMIT
-AGE_SORT_LIMIT =  int(os.environ.get('NZBPO_AgeSortLimit', 48))
-if AGE_LIMIT > AGE_SORT_LIMIT: AGE_SORT_LIMIT = AGE_LIMIT
-AGE_SORT_LIMIT_SEC = 3600 * AGE_SORT_LIMIT
+PRIORITIZE_OLD = os.environ.get('NZBPO_Prioritize', 'No') == 'Yes'
 CHECK_DUPES = os.environ.get('NZBPO_CheckDupes', 'No')
 if CHECK_DUPES != 'No' and os.environ.get('NZBOP_DUPECHECK') == 'No':
     print('[WARNING] DupeCheck should be enabled in NZBGet, otherwise ' + 
@@ -211,7 +193,6 @@ SERVERS = [c.strip(' ') for c in SERVERS]
 FILL_SERVERS = os.environ.get('NZBPO_FillServers', '').lower().split(',')
 FILL_SERVERS = [c.strip(' ') for c in FILL_SERVERS] 
 MAX_FAILURE = int(os.environ.get('NZBPO_MaxFailure', 0))
-CHECK_METHOD = 'STAT'
 VERBOSE = os.environ.get('NZBPO_Verbose', 'No') == 'Yes'
 EXTREME = os.environ.get('NZBPO_Extreme', 'No') == 'Yes'
 CHECK_LIMIT = int(os.environ.get('NZBPO_CheckLimit', 10))
@@ -360,10 +341,12 @@ def get_nzb_filename(parameters):
     '''
         get the real nzb_filename from the added parameter CnpNZBFileName
         '''
-    for p in parameters:
-        if p['Name'] == 'CnpNZBFileName':
-            break
-    return p['Value']
+    # extracting filename from job the hard way
+    s = str(parameters)
+    loc = s.rfind("u'CnpNZBFileName', u'Value': u")  ## "/'
+    s = s[loc+31:]
+    loc = s.find('}')
+    return s[:loc-1]
 
 def get_nzb_status(nzb):
     ''' 
@@ -385,12 +368,12 @@ def get_nzb_status(nzb):
         unpause_nzb(nzb[0])  # unpause based on NZBGet ID
     elif rar_msg_ids == -2:  # empty NZB or no group
         succes = True  # file send back to queue
-        print('[WARNING] The NZB file ' + str(nzb[1]) + ' appears to be '+ 
+        print('[WARNING] The NZB file ' + str(nzb[1]) + 'appears to be '+ 
             'invalid, resuming NZB.')
         unpause_nzb(nzb[0])  # unpause based on NZBGet ID
     elif rar_msg_ids == -3:  # NZB without RAR files.
         succes = True  # file send back to queue
-        print('[WARNING] The NZB file ' + str(nzb[1]) + ' does not contain ' +
+        print('[WARNING] The NZB file ' + str(nzb[1]) + ' did not contain ' +
             'any .rar files and has been moved back to the queue.')
         unpause_nzb(nzb[0])  # unpause based on NZBGet ID
     else:
@@ -612,13 +595,10 @@ def check_send_server_reply(sock, t, group, id, i, host, username, password):
                 print('[E] Socket: ' + str(i) + ' ' + str(host) + ', Send: ' + 
                     str(text))
             sock.send(text)
-        elif server_reply in ('221'):
+        elif server_reply in ('220', '221', '222', '223'):
+            # 220 article retrieved - head and body follow
             # 221 article retrieved - head follows (reply on HEAD)
-            msg_id_used = t.split()[2][1:-1]  # get msg id to identify ok article
-            if EXTREME:
-                print('[E] Socket: ' + str(i) + ' ' + str(host) + 
-                    ', NNTP reply: ' + str(t.split()))
-        elif server_reply in ('223'):
+            # 222 article retrieved - body follows
             # 223 article retrieved - request text separately (reply on STAT)
             msg_id_used = t.split()[2][1:-1]  # get msg id to identify ok article
             if EXTREME:
@@ -630,7 +610,7 @@ def check_send_server_reply(sock, t, group, id, i, host, username, password):
             if EXTREME:
                 print('[INFO] [E] Socket: ' + str(i) + ' ' + str(host) + 
                     ', NNTP reply: ' + str(t.split()))
-            text = CHECK_METHOD + ' <' + id + '>\r\n'  # STAT is faster than HEAD
+            text = 'STAT <' + id + '>\r\n'  # STAT is faster than HEAD
             if EXTREME:
                 print('[E] Socket: ' + str(i) + ' ' + str(host) + ', Send: ' + 
                     str(text))
@@ -680,12 +660,10 @@ def check_send_server_reply(sock, t, group, id, i, host, username, password):
             if VERBOSE:
                 print('[WARNING] [V] Socket: ' + str(i) + ' ' + str(host) +
                     ', Not covered NNTP server reply code: ' + str(t.split()))
-        if VERBOSE or EXTREME:
-            sys.stdout.flush()
-        if end_loop == False and server_reply in ('211', '221', '223', '281', 
-            '411', '420', '423', '430'):
+        if end_loop == False and server_reply in ('211', '220', '221', '222', 
+        '223', '281', '411', '420', '423', '430'):
             # Send next message
-            text = CHECK_METHOD + ' <' + id + '>\r\n'  # STAT is faster than HEAD
+            text = 'STAT <' + id + '>\r\n'  # STAT is faster than HEAD
             id_used = True
             if EXTREME:
                 print('[E] Socket: ' + str(i) + ' ' + str(host) + ', Send: ' + 
@@ -713,7 +691,7 @@ def fix_nzb(nzb_lines):
         '''
     if VERBOSE:
         print('[V] fix_nzb(nzb_lines=' + str(nzb_lines) + ')')
-        print('[V] Splitting NZB data into separate lines.')
+        print('[V] Splitting NZB data into lines.')
         sys.stdout.flush()
     nzb_lines = str(nzb_lines)
     positions = [n for n in xrange(len(nzb_lines)) if nzb_lines.find('><', n) == n]
@@ -725,7 +703,7 @@ def fix_nzb(nzb_lines):
         corrected_lines.append(nzb_lines[first:last])
         first = last
     if VERBOSE:
-        print('[V] Data in NZB splitted into separate lines.')
+        print('[V] Data in NZB splitted into lines.')
         sys.stdout.flush()
     return corrected_lines
 
@@ -770,14 +748,10 @@ def get_nzb_data(fname):
             elif '<group>' in low_line:  # group name
                 group = line.split('>')[1].split('<')[0]
                 groups.append(group)
-    if not group:
-        print('[ERROR] No group found in NZB file.')
+    if not group or len(all_msg_ids) == 0:
+        print('[ERROR] Empty nzb or no group.')
         if VERBOSE:
             print('[V] group: ' + str(group))
-        return -2
-    if len(all_msg_ids) == 0:
-        print('[ERROR] No message-ids found in NZB file')
-        if VERBOSE:
             print('[V] all_msg_ids: ' + str(all_msg_ids))
         return -2
     rar_msg_ids = []
@@ -1481,50 +1455,66 @@ def get_prio_nzb(jobs, paused_jobs):
         if VERBOSE:
             print('[V] Paused UNSORTED NZBs in queue that will be processed:')
             for job in paused_jobs:
-                nzb_filename = get_nzb_filename(job['Parameters'])
-                print('[V] * ' + str(nzb_filename) + ', Age: ' + 
-                    str(round((int(time.time()) - job['MaxPostTime']) \
-                     / 3600.0, 1)) + ' hours, Priority: ' + 
-                    str(job['MaxPriority']))
-        # sort on nzb age, but move older than max-age to bottom, then
-        # sort of priority. Priority items will be on top.
-        if VERBOSE:
-            print('[V] Ignoring sorting priority of items older than ' + 
-            'AgeSortLimit of '+ str(AGE_SORT_LIMIT) + ' hours')
-        max_age = int(time.time()) - int(AGE_SORT_LIMIT_SEC)
-        t1 = sorted((j for j in paused_jobs if 
-            float(j['MaxPostTime']) >= max_age), 
-            key=itemgetter('MaxPostTime'))
-        t2 = []
-        for j in paused_jobs:
-            if float(j['MaxPostTime']) < max_age:
-                t2.append(j)
-        for t in t2:
-            t1.append(t)
-        jobs_sorted = (sorted(t1, key=itemgetter('MaxPriority'), 
-            reverse=True))
+                if job['Status'] in ('PAUSED'):
+                    nzb_filename = get_nzb_filename(job['Parameters'])
+                    print('[V] * ' + str(nzb_filename) + ', Age: ' + 
+                        str(round((int(time.time()) - job['MaxPostTime']) \
+                         / 3600.0, 1)) + ' hours, Priority: ' + 
+                        str(job['MaxPriority']))
+        if PRIORITIZE_OLD:
+            # sort on nzb age, then on priority. Priority items will be on top.
+            # oldest file has lowest maxposttime
+            if VERBOSE:
+                print('[V] Maintaining sorting priority of items older than'+ 
+                    ' AgeLimit of '+ str(AGE_LIMIT) + ' hours')
+            t = sorted(paused_jobs, key=itemgetter('MaxPostTime'))
+            jobs_sorted = (sorted(t, key=itemgetter('MaxPriority'), 
+                reverse=True))
+        else:
+            # sort on nzb age, but move older than max-age to bottom, then
+            # sort of priority. Priority items will be on top.
+            if VERBOSE:
+                print('[V] Ignoring sorting priority of items older than ' + 
+                'AgeLimit of '+ str(AGE_LIMIT) + ' hours')
+            max_age = int(time.time()) - int(AGE_LIMIT_SEC)
+            t1 = sorted((j for j in paused_jobs if 
+                float(j['MaxPostTime']) >= max_age), 
+                key=itemgetter('MaxPostTime'))
+            t2 = sorted((j for j in paused_jobs if 
+                float(j['MaxPostTime']) < max_age), 
+                key=itemgetter('MaxPostTime'))
+            for t in t2:
+                t1.append(t)
+            jobs_sorted = (sorted(t1, key=itemgetter('MaxPriority'), 
+                reverse=True))
         if VERBOSE:
             print'[V] Paused and SORTED NZBs in queue that will be processed:'
             for job in jobs_sorted:
-                nzb_filename = get_nzb_filename(job['Parameters'])
-                print('[V] * ' + str(nzb_filename) + ', Age: ' + 
-                    str(round((int(time.time()) - job['MaxPostTime']) \
-                    / 3600.0, 1)) + ' hours, Priority: ' + 
-                    str(job['MaxPriority']))
+                if job['Status'] in ('PAUSED'):
+                    nzb_filename = get_nzb_filename(job['Parameters'])
+                    print('[V] * ' + str(nzb_filename) + ', Age: ' + 
+                        str(round((int(time.time()) - job['MaxPostTime']) \
+                        / 3600.0, 1)) + ' hours, Priority: ' + 
+                        str(job['MaxPriority']))
         for job in jobs_sorted:
             nzb_filename = get_nzb_filename(job['Parameters'])
-            nzb_id = job['NZBID']
-            nzb_age = job['MaxPostTime']  # nzb age
-            nzb_critical_health = job['CriticalHealth']
-            nzb_dupe_key = job['DupeKey']  # if empty returns u''
-            if nzb_dupe_key == '':
-                nzb_dupe_key = 'NONE'
-            nzb_dupe_score = job['DupeScore']
-            nzb = [nzb_id, nzb_filename, nzb_age, nzb_critical_health,
-                nzb_dupe_key, nzb_dupe_score]
-            # do a completion check, returns true if ok and resumed
-            if get_nzb_status(nzb):
-                break
+            if job['Status'] == 'PAUSED':
+                nzb_id = job['NZBID']
+                nzb_age = job['MaxPostTime']  # nzb age
+                nzb_critical_health = job['CriticalHealth']
+                nzb_dupe_key = job['DupeKey']  # if empty returns u''
+                if nzb_dupe_key == '':
+                    nzb_dupe_key = 'NONE'
+                nzb_dupe_score = job['DupeScore']
+                nzb = [nzb_id, nzb_filename, nzb_age, nzb_critical_health,
+                    nzb_dupe_key, nzb_dupe_score]
+                # do a completion check, returns true if ok and resumed
+                if get_nzb_status(nzb):
+                    break
+            else:
+                if VERBOSE:
+                    print('[V] Skipping: "' + nzb_filename +
+                        '": not paused')
         print('Overall check completed in ' +
             str(round(time.time() - start_time, 2)) + ' sec.')
         nzbget_resume()
@@ -1535,7 +1525,7 @@ def scheduler_call():
         check if files in the queue should be checked by the completion script
         '''
     global queue_time
-    queue_time = -1  # NZBGet closes connection after 5 sec. Avoid too much conn
+    queue_time = -1
     if VERBOSE:
         print('[V] scheduler_call()')
     # data contains ALL properties each NZB in queue
@@ -1567,7 +1557,6 @@ def queue_call():
     queue_time = -1
     if VERBOSE:
         print('[V] queue_call()')
-    print(os.environ['NZBNA_QUEUEDFILE'])
     # check if NZB is added, otherwise it will call on each downloaded part
     event = os.environ['NZBNA_EVENT']
     if (event == 'NZB_ADDED' or event == 'NZB_DOWNLOADED' 
@@ -1613,18 +1602,6 @@ def scan_call():
         # NZBNP_FILENAME needs to be written to other NZBPR_var for later use.
         nzb_filename = os.environ['NZBNP_FILENAME']
         nzb_dir = os.environ['NZBOP_NZBDIR']
-        if nzb_dir[-1:] == '\\' or nzb_dir[-1:] == '/':
-            print('[WARNING] Please correct your NZBGet PATHS Settings '+ 
-                    'by removing the trailing "' + str(os.sep) + '"!')
-        if os.sep == '\\':  #windows \
-            if nzb_dir.find('/') <> -1:
-                print('[WARNING] Please correct your NZBGet PATHS Settings '+ 
-                    'using "' + str(os.sep) + '" only!')
-        else:  # nix
-            if nzb_dir.find('\\') <> -1:
-                print('nix')
-                print('[WARNING] Please correct your NZBGet PATHS Settings '+ 
-                    'using "' + str(os.sep) + '" only!')
         nzb_filename = nzb_filename.replace(nzb_dir + os.sep, '')
         l_nzb = len(nzb_filename)  # length for file matching, with .nzb ext
         c = 0
@@ -1678,10 +1655,6 @@ def main():
     if 'NZBNA_NZBNAME' in os.environ: queue_call()
     # check if the script is called as Scan Script
     if 'NZBNP_NZBNAME' in os.environ: scan_call()
-    # check if the script is called via button
-    if 'NZBCP_COMMAND' in os.environ:
-        scheduler_call()
-        sys.exit(93)
 
 def write_to_file(input):
     '''
@@ -1706,26 +1679,64 @@ TODO:
     - User blackhawkpr had an issue related to a wrong or missing time stamp in
       .lock file, can not reproduce, added additinal logging for it in VERBOSE 
       logging.
-    - HEAD will fails as it does not check if all packets are received before 
-      asking for next HEAD. (Complete HEAD data ends with a .) HEAD 
-      implementation for python 3 only. STAT always returns 1 packet
-      http://code.activestate.com/recipes/408859/
 
-    ADDED/FIXED:
-    - Fixed an issue in where a filename might contained a } sign, resulting in
-      the no such nzb file message. Issue reported by user barenaked.
-    - Added check for correct python version.
-    - Removed Prioritize option
-    - Added option AgeSortLimit
-    - Added the option to run a scheduler check manually, using the button 
-      option introduced in NZBget v19, works only in NZBget 19+
-    - Added check on correct use of path separators, if incorrect a warning
-      message will be shown.
+    ADDED/FIXED:    
+    - Added a suggested feature by user geogolem to check priority of paused and 
+      unpaused items, and sent paused items with higher priority than the active 
+      download also back to queue, and let NZBGet handle the download priority.
+    - Fixed an issue where the script was not triggered when performing queue
+      operations (like delete) when the related file was not paused by the 
+      script.
+    - Fixed an issue that caused the socket error message "The operation did not
+      complete (read) (_ssl.c:1752)" on sockets that already had received the
+      last reply from the news-provider, speeding up the script.
+    - Socket creation now is done for only the server(s) that will actually be 
+      used, instead of creating the sockets for all listed servers prior to the
+      check. This speeds up the script, especially when a lot of newsservers 
+      listed in the settings.
+    - Fixed an issue when more sockets than articles were made, causing some 
+      warning messages, and might trigger the number of connections exceeded 
+      warning messages in NZBGet.
+    - Added option to check NZBGet server retention value, so it may skip the 
+      check for a typical server with lower specified retention than post age. 
+      Requires NZBGet 15.0+
+    - Updated the extraction of article data from the NZB file, speeding up the
+      data extraction process by ~80%. Change of if statements into else ifs,
+      find() replaced by in, HTML parsing at the end, not for each line. 
+      Especially noticable on files with many articles.
+    - Some serious code clean up.
+    - Added an option to limit the maximum amount of articles that will be 
+      checked overruling the % option.
+    - Fixed an issue for when an NZB file does not contain any rars, and the 
+      script did crash. NZB will now be resumed, and NZBGet will most likely 
+      mark it as FAILED. As reported by user konubywy.
+    - Added an option that sends a QUIT message to newsserver after all messages
+      received, and closes the used sockets. In this way the connections might
+      be freed for the actual downloading, solving an issue where NZBGet would 
+      return a message that too many connections are being used for a typical
+      server.
+    - Added an option that waits till NZBGet expectedly closed the connections
+      to the news servers, avoiding that the script would trigger a message
+      that too many connections are being used for a typical server, resulting 
+      in a failed check on that news server.
+    - The ForceFailure option now actually searches for the smallest par and 
+      other file, to limit the data use and time of forcing the failure.
+    - Rebuild of the error catching on slow replies.
+    - Script now is able to use the 'Unified extension scripts' features that
+      will be introduced in NZBGet 18, and simplifies the scripts use.
+    - Script in NZBGet 18 won't be called for each downloaded file inside the
+      NZB, only noticable in VERBOSE mode.
+    - Fixed an issue when only 1 article would be checked, the script crashed
+      as no group was defined. Reported by dagoob.
+    - Added an option to increase the minimal amount of articles that will be 
+      checked overruling the % option.
+    - Added IPv6 support thanks to user dagoob.
 
 Script structure:
-- main() -> scan / queue / schedule / button call
+
+- main() -> scan / queue / schedule script
 - scan -> pause typical incoming NZBs
-- queue / schedule / button -> start whole completion check loop, get queue data list
+- queue / schedule -> start whole completion check loop, get queue data list
     - lock_file() -> check if not running, otherwise create lock file
     - get_prio_nzb() -> sent highest prio / oldest within to check
         - nzbget_paused() -> check if NZBGet not paused, pause NZBGet for check
